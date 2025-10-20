@@ -1,0 +1,3 @@
+autonomy:
+  default_tier: TIER0_INFORM
+  kill_switch: true
