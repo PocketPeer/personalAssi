@@ -1,0 +1,286 @@
+{
+  "meta": {
+    "title": "End-to-End Day-Running Agent — Implementation Spec",
+    "version": "1.0.0",
+    "owner": "Peer Schwirtz",
+    "timezone": "Europe/Berlin",
+    "languages": [
+      "de-DE",
+      "en-US"
+    ],
+    "description": "Specification for a proactive, voice-enabled, policy-aware personal AI agent that runs the user's day with autonomy tiers, Teams approvals, and Claude-based skills."
+  },
+  "high_level_objectives": [
+    "Morning Brief (07:30) with agenda, top emails, and 3 nudges.",
+    "Continuous email triage and draft proposals.",
+    "Scheduling with findMeetingTimes, holds, Teams approval, and sending invites.",
+    "Decision packs (PPTX/DOCX) with Options/Costs/Risks/Recommendation.",
+    "Push-to-talk voice (de-DE) using Azure Speech.",
+    "Teams one-tap approvals for risky actions.",
+    "Memory + audit logs under EU data & privacy constraints."
+  ],
+  "constraints": {
+    "data_residency": "EU-preferred for all cloud services and storage.",
+    "privacy": "PII redaction for prompts; do not persist raw sensitive content. Use hashed logging for payloads.",
+    "security": "Least-privilege OAuth scopes; TIER0 by default; kill switch to force TIER0.",
+    "governance": "Audit every stateful action with timestamp, actor, tool, request, decision, and result."
+  },
+  "environment_variables": {
+    "required": [
+      "GRAPH_TENANT_ID",
+      "GRAPH_CLIENT_ID",
+      "GRAPH_CLIENT_SECRET",
+      "GRAPH_SCOPES",
+      "ANTHROPIC_API_KEY",
+      "TEAMS_WEBHOOK_URL",
+      "AZURE_SPEECH_KEY",
+      "AZURE_SPEECH_REGION",
+      "VOICE_TTS_VOICE"
+    ],
+    "defaults": {
+      "GRAPH_SCOPES": "Calendars.Read Mail.Read User.Read Files.Read",
+      "AZURE_SPEECH_REGION": "westeurope",
+      "VOICE_TTS_VOICE": "de-DE-KatjaNeural"
+    }
+  },
+  "tech_stack": {
+    "language": "Python 3.11",
+    "orchestration": "LangGraph",
+    "llm": "Claude 3.5 Sonnet (Anthropic API)",
+    "connectors": [
+      "Microsoft Graph (Calendar/Mail/Drive)",
+      "Teams Incoming Webhook"
+    ],
+    "voice": "Azure Cognitive Services Speech (STT/TTS)",
+    "docs": [
+      "python-pptx",
+      "python-docx"
+    ],
+    "web": "FastAPI + Uvicorn",
+    "observability": [
+      "logging + JSON audit logs"
+    ],
+    "container": "Dockerfile"
+  },
+  "autonomy": {
+    "tiers": {
+      "TIER0_INFORM": [
+        "research",
+        "summaries",
+        "drafts"
+      ],
+      "TIER1_ASSIST": [
+        "calendar.place_hold",
+        "email.create_draft",
+        "docs.generate"
+      ],
+      "TIER2_ACT": [
+        "calendar.send_invite",
+        "email.send_reply",
+        "files.share_link"
+      ]
+    },
+    "default_tier": "TIER0_INFORM",
+    "kill_switch": true,
+    "approvals": {
+      "channel": "Microsoft Teams Adaptive Card",
+      "buttons": [
+        "✅ Genehmigen",
+        "❌ Ablehnen"
+      ],
+      "callbacks": {
+        "approve": "/callback/approve",
+        "decline": "/callback/decline"
+      }
+    }
+  },
+  "directory_structure": {
+    "root": "project/",
+    "layout": [
+      "agent/__init__.py",
+      "agent/planner.py",
+      "agent/governor.py",
+      "agent/api.py",
+      "agent/config/settings.yaml",
+      "agent/config/policies.yaml",
+      "agent/tools/graph_calendar.py",
+      "agent/tools/graph_mail.py",
+      "agent/tools/docs.py",
+      "agent/tools/notifier.py",
+      "agent/tools/storage.py",
+      "agent/tools/memory.py",
+      "agent/integrations/teams_cards.py",
+      "agent/skills/*.skill.md",
+      "agent/voice/stt_azure.py",
+      "agent/voice/tts_azure.py",
+      "agent/voice/loop.py",
+      "infra/requirements.txt",
+      "infra/Dockerfile",
+      "README.md"
+    ]
+  },
+  "fastapi_endpoints": [
+    {
+      "method": "GET",
+      "path": "/callback/approve",
+      "query": {
+        "item": "string"
+      },
+      "success": {
+        "status": "approved",
+        "item": "<id>",
+        "ts": "<epoch>"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/callback/decline",
+      "query": {
+        "item": "string"
+      },
+      "success": {
+        "status": "declined",
+        "item": "<id>",
+        "ts": "<epoch>"
+      }
+    }
+  ],
+  "connectors": {
+    "microsoft_graph": {
+      "calendar": {
+        "findMeetingTimes": "POST /me/findMeetingTimes",
+        "createEvent": "POST /me/events",
+        "updateEvent": "PATCH /me/events/{id}"
+      },
+      "mail": {
+        "list": "GET /me/messages",
+        "createDraft": "POST /me/messages",
+        "send": "POST /me/sendMail"
+      },
+      "drive": {
+        "upload": "PUT /me/drive/items/{parent-id}:/filename:/content",
+        "createShareLink": "POST /me/drive/items/{item-id}/createLink"
+      }
+    },
+    "teams_webhook": {
+      "message_card": "POST payload with sections[]",
+      "adaptive_card": "POST payload with attachments[].contentType=application/vnd.microsoft.card.adaptive"
+    }
+  },
+  "skills": {
+    "morning_brief.skill.md": "## Morning Brief\\n**Agenda:**\\n{{agenda}}\\n**Top E-Mails:**\\n{{emails}}\\n**Nudges:**\\n{{nudges}}",
+    "email_triage.skill.md": "Email-Triage-Template mit Clustern (Projekt, VIP, Deadline) und Antwortstilen.",
+    "scheduling.skill.md": "Sprache & Constraints für Vorschläge/Reschedules; höfliche Formulierungen DE/EN.",
+    "decision_pack.skill.md": "Kontext • Optionen (A/B/C) • Kosten (FTE/day rates) • Risiken • Empfehlung • Nächste Schritte.",
+    "incident_comms.skill.md": "SEV-Update-Template: Betroffene Dienste, Impact, Maßnahmen, nächste Meldung, Owner."
+  },
+  "workflows": {
+    "morning_brief": {
+      "trigger": {
+        "type": "cron",
+        "time": "07:30",
+        "tz": "Europe/Berlin"
+      },
+      "inputs": [
+        "calendar.today",
+        "emails.last_12h",
+        "tasks.backlog"
+      ],
+      "output": [
+        "Teams text",
+        "voice TTS"
+      ],
+      "autonomy": "TIER0_INFORM",
+      "audit": true
+    },
+    "email_triage": {
+      "trigger": {
+        "type": "webhook",
+        "source": "mail"
+      },
+      "actions": [
+        "cluster",
+        "extract_decisions",
+        "draft_replies"
+      ],
+      "output": [
+        "Teams digest",
+        "draft emails"
+      ],
+      "autonomy": "TIER1_ASSIST",
+      "audit": true
+    },
+    "scheduling": {
+      "trigger": [
+        "new_invite",
+        "conflict",
+        "user_request"
+      ],
+      "steps": [
+        "findMeetingTimes",
+        "place_holds",
+        "Teams_approval",
+        "send_invites"
+      ],
+      "autonomy": [
+        "TIER1_ASSIST",
+        "TIER2_ACT"
+      ],
+      "audit": true
+    },
+    "decision_pack": {
+      "trigger": [
+        "deadline",
+        "user_request"
+      ],
+      "steps": [
+        "collect_context",
+        "generate_PPTX_DOCX",
+        "share_link",
+        "draft_summary_email"
+      ],
+      "autonomy": "TIER1_ASSIST",
+      "audit": true
+    },
+    "voice_loop": {
+      "mode": "push_to_talk",
+      "stt": "Azure Speech de-DE",
+      "tts": "de-DE-KatjaNeural",
+      "intents": {
+        "brief": "agent.morning_brief",
+        "termin": "agent.scheduling.suggest",
+        "entscheidungsvorlage": "agent.decision_pack.create",
+        "stop": "end"
+      }
+    }
+  },
+  "acceptance_criteria": [
+    "Morning Brief posts to Teams and plays via TTS at 07:30 ±1 min.",
+    "Email triage produces 3+ quality drafts/day.",
+    "Scheduling converts holds to invites after Teams approval.",
+    "Decision pack contains Options/Costs/Risks/Recommendation.",
+    "All actions audited; TIER2 requires explicit approval.",
+    "Voice loop recognizes German commands and speaks back."
+  ],
+  "run_commands": {
+    "install": [
+      "pip install -r infra/requirements.txt"
+    ],
+    "setup_env": [
+      "cp .env.example .env"
+    ],
+    "start_agent": [
+      "python -m agent.main"
+    ],
+    "start_api": [
+      "uvicorn agent.api:app --host 0.0.0.0 --port 8000 --reload"
+    ],
+    "start_voice": [
+      "python -m agent.voice.loop"
+    ],
+    "docker": [
+      "docker build -t day-agent .",
+      "docker run --env-file .env -p 8000:8000 day-agent"
+    ]
+  }
+}
