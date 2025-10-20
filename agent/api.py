@@ -9,6 +9,7 @@ from agent.skills.loader import SkillLoader
 from agent.skills.renderer import SkillsRenderer
 from agent.finance.config import JsonPortfolioStore, Portfolio, Position
 from agent.finance.monitor import PortfolioMonitor
+from agent.finance.alerts import JsonAlertRuleStore, AlertRule
 
 app = FastAPI(title="Day Agent API")
 
@@ -39,6 +40,10 @@ def get_portfolio_monitor() -> PortfolioMonitor:
         def get_quote(self, symbol: str):
             return Quote(symbol=symbol, price=0.0, currency="USD")
     return PortfolioMonitor(provider=DummyProvider(), notifier=TeamsWebhookNotifier("") )
+
+
+def get_alert_rule_store() -> JsonAlertRuleStore:
+    return JsonAlertRuleStore()
 
 
 class BriefPreviewQuery(BaseModel):
@@ -101,3 +106,25 @@ def portfolio_check(name: str, body: CheckRulesBody):
     _ = body.rules
     monitor.check(p, [])
     return {"ok": True}
+
+
+class RulesBody(BaseModel):
+    rules: list[dict]
+
+
+@app.post("/portfolio/{name}/rules")
+def rules_save(name: str, body: RulesBody):
+    store = get_alert_rule_store()
+    rules = [AlertRule(**r) for r in body.rules]
+    store.save(name, rules)
+    return {"ok": True}
+
+
+@app.get("/portfolio/{name}/rules")
+def rules_load(name: str):
+    store = get_alert_rule_store()
+    rules = store.load(name)
+    return {"rules": [
+        {"symbol": r.symbol, "threshold": r.threshold, "direction": r.direction}
+        for r in rules
+    ]}
