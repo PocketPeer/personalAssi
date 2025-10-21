@@ -10,6 +10,7 @@ from agent.skills.renderer import SkillsRenderer
 from agent.finance.config import JsonPortfolioStore, Portfolio, Position
 from agent.finance.monitor import PortfolioMonitor
 from agent.finance.alerts import JsonAlertRuleStore, AlertRule
+from apscheduler.triggers.interval import IntervalTrigger
 
 app = FastAPI(title="Day Agent API")
 
@@ -44,6 +45,12 @@ def get_portfolio_monitor() -> PortfolioMonitor:
 
 def get_alert_rule_store() -> JsonAlertRuleStore:
     return JsonAlertRuleStore()
+
+
+def get_scheduler():
+    from agent.scheduler import create_scheduler
+    # In a real app, we'd keep a global scheduler instance; for tests, return a stub
+    return create_scheduler("Europe/Berlin")
 
 
 class BriefPreviewQuery(BaseModel):
@@ -128,3 +135,24 @@ def rules_load(name: str):
         {"symbol": r.symbol, "threshold": r.threshold, "direction": r.direction}
         for r in rules
     ]}
+
+
+class ScheduleBody(BaseModel):
+    interval_minutes: int
+
+
+@app.post("/portfolio/{name}/schedule")
+def schedule_portfolio_monitor(name: str, body: ScheduleBody):
+    scheduler = get_scheduler()
+    store = get_portfolio_store()
+    rule_store = get_alert_rule_store()
+    monitor = get_portfolio_monitor()
+
+    def job():
+        p = store.load(name)
+        rules = rule_store.load(name)
+        monitor.check(p, rules)
+
+    trigger = IntervalTrigger(minutes=body.interval_minutes)
+    scheduler.add_job(job, trigger=trigger, id=f"portfolio_monitor_{name}", replace_existing=True)
+    return {"ok": True}
